@@ -8,6 +8,137 @@ date: "2024-01-10"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Model structure
+
+### General
+
+# from the equation for observed sound level at distance d (Euclidean distance - 1m):
+# L_obs = L_0 - A_geo - A_atm - A_hab
+# A_hab = alpha_hab * freq * d
+# A_geo = 20*log10(d)
+# A_atm = ...
+#
+# where: 
+# L_0: source level at 1 m, dB SPL
+# d: distance to source - 1m
+# A_geo: level reduction due to spherical spreading
+# A_atm: loss due to atmospheric absorption
+# A_hab: any remaining attenuation beyond A_geo and A_atm
+# 
+
+### Definitions
+
+Indices:
+* i: species
+* j: event localized (a song that happened)
+* k: clip (recording of song from known distance)
+
+Constants applied to data before modeling
+* d: distance of clip k's recorder from event j
+* f: frequency of song recorded in event j
+
+Sound parameters:
+* `A_geo_ijk`: geometric spreading, 1/d_ijk**2
+* `A_atm_ijk`: atmospheric loss, proportional to d_ijk and f_i**2
+* `Ahab_ijk` = excess attenuation beyond spherical spreading and atmospheric attenuation, which we model as linear with habitat coefficients for open/closed (habitat_ijk) and landscape rugosity
+* `L_i` = true sound level for species i, dB SPL measurement of source volume, corrected by calibrating the ARU recording based on angle of arrival and by removing noise level
+
+RSL of a clip is:
+
+`RSL_ijk := L_i - A_geo - A_atm - Ahab_ijk`
+
+We can calculate `A_geo` and `A_atm`, so add those to both sides and just model `Y`: under-estimated source volume based on physics:
+
+`RSL_ijk + A_geo(d_ijk) + A_atm(d_ijk, f_i) = L_i - Ahab(d_ijk, f_i)`
+
+Define the quantity on the left side as `Y_ijk`, the underestimated source volume based on physics = Source volume - excess attenuation due to habitat: 
+
+* `Y_ijk := RSL_ijk + A_geo(d_ijk) + A_atm(d_ijk, f_i)`
+
+Also we define `Ahab` as:
+* `Ahab(d_ijk, f_i) := alphahab_ijk * f_i * d_ijk`
+
+So we have finally:
+* `Y_ijk = L_i - alphahab_ijk * f_i * d_ijk`
+
+### Model (Deterministic part only)
+
+Divide everything by `(-f_i * d_ijk)`:
+* `Y_ijk/(-f_i * d_ijk) = L_i/(-f_i * d_ijk) + alphahab_ijk`
+
+Redefine some things:
+* `Y*_ijk := Y_ijk/(-f_i * d_ijk)`
+* `L*_i := L_i/(-f_i * d_ijk)`
+
+So then we have:
+* `Y*_ijk = L*_i + alphahab_ijk`
+
+Add covariates for habitat attenuation:
+* `alphahab_ijk := alpha_0 + alpha_1 * habitat_tree_cover` 
+
+Example of a final model to put into LME:
+* `Y*_ijk = L*_i + alpha_0 + alpha_1 * habitat_tree_cover`
+
+## Data transformations
+
+### To put into model
+
+We have the calibrated RSL (noise removed, recorder calibration accounted for)
+
+Turn it into the modeled quantity `y_ijk`
+
+```
+Y*_ijk = Y_ijk / (-f_i * d_ijk)
+      = (RSL_ijk + A_geo(d) + A_atm(d)) / (-f_i * d_ijk)
+```
+
+### To get out of model
+
+What is the true `L_i` for each species at distance = 1?
+
+In our case we're claiming that you have to add alpha_0 to the species covariate to get the true L_i?
+
+SO the covariate gotten from the model for the species, plus the offset for the intercept (which is alpha_0) is:
+
+```
+Y*_ijk = L*_ijk + alpha_0 + alpha_1 * habitat_tree_cover_ijk
+
+# Replace the stars
+Y_ijk / (-f_i * d_ijk) = L_ijk/(-f_i * d_ijk) + alpha_0 + alpha_1 * habitat_tree_cover_ijk
+
+# Replace Y_ijk
+(RSL_ijk + A_geo(d_ijk) + A_atm(d_ijk, f_i)) / (-f_i * d_ijk) = L_ijk/(-f_i * d_ijk) + alpha_0 + alpha_1 * habitat_tree_cover_ijk
+
+#Switch the L_ijk term and the RSL term sides
+L_ijk/(f_i * d_ijk) = (RSL_ijk + A_geo(d_ijk) + A_atm(d_ijk, f_i)) / (f_i * d_ijk) + alpha_0 + alpha_1 * habitat_tree_cover_ijk
+
+# Now we get
+L_i = RSL_ijk + A_geo(d_ijk) + A_atm(d_ijk, f_i) + (alpha_0 + alpha_1 * habitat_tree_cover_ijk)*(f_i * d_ijk)
+
+```
+
+
+```{r}
+intercept <- -0.0002688748
+habitat_tree_cover_covariate <- -0.0012270960
+habitat_tree_cover_mean <- 0.722
+class_covariate <- 0.0007018519 #hermit thrush
+f_i <- 3500#of hermit thrush
+d_ijk <- 1 #(get 1m)
+
+L_i = -(class_covariate + intercept)*(-f_i * d_ijk)
+```
+
+
+# isolate unkowns L_0 and A_hab=alpha_hab * f *d
+# Y = L* + alpha_hab
+# where Y is -1*(L_obs + A_geo + A_atm)/(freq*d)
+# and L* is -1*L_0/(freq*d)
+# 
+# model right side as linear model, 
+# with nested random effects on L* for species _and_ for event within species
+
+
 ## Write down the model for estimating source level from distance
 
 # first try with lme4
@@ -20,58 +151,7 @@ library("nimble")
 install.packages("baRulho")
 library("baRulho")
 ```
-# Model structure
 
-## General
-
-
-## Definitions
-
-Indices:
-* i: species
-* j: event localized (a song that happened)
-* k: clip (recording of song from known distance)
-
-Constants applied to data before modeling
-* d: distance of clip k's recorder from event j
-* f: frequency of song recorded in event j
-
-
-Sound parameters:
-* `A_geo`: geometric spreading, 1/d**2
-* `A_atm`: atmospheric loss, proportional to d and f**2
-* `Ahab_ijk` = excess attenuation beyond spherical spreading and atmospheric attenuation, which we model as linear with habitat coefficients for open/closed (habitat_ijk) and landscape rugosity
-* `L_i` = source volume for species i, dB SPL measurement of source volume, corrected by calibrating the ARU recording based on angle of arrival and by removing noise level
-
-RSL of a clip is:
-
-`RSL_ijk = L_i - A_geo - A_atm - Ahab_ijk`
-
-We can calculate `A_geo` and `A_atm`, so subtract those from both sides and just model `Y`: under-estimated source volume based on physics:
-
-`Y_ijk = RSL_ijk + A_geo(d) + A_atm(d) = L_i - Ahab_ijk`
-
-## Model (Deterministic part only)
-
-Underestimated source volume based on physics = Source volume - excess attenuation due to habitat:
-* `Y_ijk = L_i - Ahab_ijk * f_i * d_ijk`
-
-Divide everything by `(f_i * d_ijk)`:
-* `Y_ijk/(f_i * d_ijk) = L_i/(f_i * d_ijk) - Ahab_ijk`
-
-Redefine some things:
-* `y_ijk = Y_ijk/(f_i * d_ijk)`
-* `L*_i = L_i/(f_i * d_ijk)`
-
-Add covariates for habitat attenuation:
-* `Ahab_ijk = alpha_0 + alpha_1 * topography_ijk + alpha_2 * rugosity_ijk` 
-
-Final model to put into LME:
-* `y_ijk = (1|-1 + L*_i) - (alpha_0 + alpha_1 * topography_ijk + alpha_2 * rugosity_ijk)`
-
-
-
-# 
 
 ```{markdown}
 # Indices
