@@ -103,18 +103,21 @@ Final model to put into LME:
 # 
 # model right side as linear model, 
 # with nested random effects on L* for species _and_ for event within species
+```
 
+```{r}
 clips = read.csv('../metadata/localized_clips_with_decibel.csv')
 
 #calc Y from L_obs (corrected_dB_max), A_geo, A_atm
 clips$freq <- (clips$low_f + clips$high_f)/2
 r0 = 1 #1 meter reference point
 clips$d = clips$distance_m - r0 #distance to "reference" d0=1m
-ref_pressure = 20e-6 # 20 micro Pascals, reference of dB SPL in air
+# ref_pressure = 20e-6 # 20 micro Pascals, reference of dB SPL in air
 # level_pascals = 10^(clips$corrected_dB_max/20) * (ref_pressure)^2 
 atm_atten = atmospheric_attenuation(
-  clips$freq,clips$temp, RH=0.7, p=101325,
-  formula = 1)
+  clips$freq,clips$temp, RH=clips$rel_hum, p=101325,
+  formula = 2) # formula 2: 2007 algorithm; units are dB/meter
+# atmospheric absoprtion is atm_atten coef * distance 
 clips$A_atm <- atm_atten$atmospheric.attenuation * clips$d
 
 # geometric spreading
@@ -133,17 +136,35 @@ clips$Y <- -1*(clips$corrected_dB_max + clips$A_geo + clips$A_atm)/(clips$d*clip
 # we are not fitting a sigma for species volume; 
 m0 <- lm(Y ~ 1 + class_name , data = clips) 
 
-L0 = -fixedeffect * f * d
+# L0 = -fixedeffect * f * d
 # alpha0 is the intercept
 
 # back-calculate L0_i per species and 
 m0 <- lmer(Y ~ 1  + class_name + (1 | event_id), data = clips) 
 m1 <- lmer(Y ~ 1  + habitat_closed + class_name + (1 | event_id), data = clips) 
-m2 <- lmer(Y ~ 1  + habitat_rugosity + habitat_closed + class_name + (1 | event_id), data = clips) 
+m2 <- lmer(Y ~ 1 + habitat_tree_cover + class_name + (1 | event_id), data = clips) 
+m3 <- lm(Y ~ 1 + habitat_tree_cover + class_name, data = clips) 
+
+# Assuming your dataframe is named 'your_dataframe'
+library(dplyr)
+
+clips_no_rare_classes <- clips %>%
+  group_by(class_name) %>%
+  filter(n() >= 50) %>%
+  ungroup()
+
+# clips_no_sparse_events <- clips_no_rare_classes %>%
+#   group_by(event_id) %>%
+#   filter(n() >= 3) %>%
+#   ungroup()
+
+#all of the models with event_id random effect are showing 
+#"boundary (singular) fit: see help('isSingular')"
+m4 <- lmer(Y ~ 1 + habitat_tree_cover + class_name + (1 | event_id), data = clips_no_rare_classes) 
 
 # add covariates:
 #+ a_rugosity*habitat_rugosity + a_rugosity*habitat_closed
-m1
+m3
 ```
 
 
