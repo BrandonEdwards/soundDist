@@ -20,24 +20,61 @@ library("nimble")
 install.packages("baRulho")
 library("baRulho")
 ```
+# Model structure
+
+## General
 
 
-```{r}
-# i: species; j: event localized (a song that happened); k: clip (recording of song from known distance)
-# d: distance of clip k's recorder from event j
-# f: frequency of song recorded in event j
-# Y: under-estimated source volume based on physics, ie L_observed + A_geo(d) + A_atm(d)
-#   - equalt to L_i - Ahab_ijk, ie source volume - excess attenuation due to habitat
-# where L_observed is the dB SPL measurement of source volume, corrected by calibrating the ARU recording
-# based on angle of arrival and by removing noise level
+## Definitions
 
-# Ahab_ijk: excess attenuation beyond spherical spreading and atmospheric attenuation
-#   which we model as linear with habitat coefficients for open/closed (habitat_ijk) and landscape rugosity
+Indices:
+* i: species
+* j: event localized (a song that happened)
+* k: clip (recording of song from known distance)
 
-# A_geo: geometric spreading, 1/d**2
-# A_atm: atmospheric loss, proportional to d and f**2
+Constants applied to data before modeling
+* d: distance of clip k's recorder from event j
+* f: frequency of song recorded in event j
 
-# Y_ijk = L_i - Ahab_ijk * f_i * d_ijk
+
+Sound parameters:
+* `A_geo`: geometric spreading, 1/d**2
+* `A_atm`: atmospheric loss, proportional to d and f**2
+* `Ahab_ijk` = excess attenuation beyond spherical spreading and atmospheric attenuation, which we model as linear with habitat coefficients for open/closed (habitat_ijk) and landscape rugosity
+* `L_i` = source volume for species i, dB SPL measurement of source volume, corrected by calibrating the ARU recording based on angle of arrival and by removing noise level
+
+RSL of a clip is:
+
+`RSL_ijk = L_i - A_geo - A_atm - Ahab_ijk`
+
+We can calculate `A_geo` and `A_atm`, so subtract those from both sides and just model `Y`: under-estimated source volume based on physics:
+
+`Y_ijk = RSL_ijk + A_geo(d) + A_atm(d) = L_i - Ahab_ijk`
+
+## Model (Deterministic part only)
+
+Underestimated source volume based on physics = Source volume - excess attenuation due to habitat:
+* `Y_ijk = L_i - Ahab_ijk * f_i * d_ijk`
+
+Divide everything by `(f_i * d_ijk)`:
+* `Y_ijk/(f_i * d_ijk) = L_i/(f_i * d_ijk) - Ahab_ijk`
+
+Redefine some things:
+* `y_ijk = Y_ijk/(f_i * d_ijk)`
+* `L*_i = L_i/(f_i * d_ijk)`
+
+Add covariates for habitat attenuation:
+* `Ahab_ijk = alpha_0 + alpha_1 * topography_ijk + alpha_2 * rugosity_ijk` 
+
+Final model to put into LME:
+* `y_ijk = (1|-1 + L*_i) - (alpha_0 + alpha_1 * topography_ijk + alpha_2 * rugosity_ijk)`
+
+
+
+# 
+
+```{markdown}
+# Indices
 
 # good explanation of nesting in lme4 
 # https://www.muscardinus.be/statistics/nested.html#:~:text=Nested%20random%20effects%20assume%20that,relationship%20between%20the%20random%20effects.
@@ -45,7 +82,6 @@ library("baRulho")
 # random effects on A and B: (1|A) + (1|A:B) can be abbreviated into (1|A/B)
 # and if B values are unique, rather than repeated, across A, 
 # (1|A) + (1|B) is equivalent as well
-
 
 # from the equation for observed sound level at distance d (Euclidean distance - 1m):
 # L_obs = L_0 - A_geo - A_atm - A_hab
