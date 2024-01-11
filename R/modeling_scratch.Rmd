@@ -1,0 +1,143 @@
+---
+title: "soundDist_scratch"
+output: html_document
+date: "2024-01-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Write down the model for estimating source level from distance
+
+# first try with lme4
+
+```{r}
+library(lme4)
+
+install.packages("nimble")
+library("nimble")
+install.packages("baRulho")
+library("baRulho")
+```
+
+
+```{r}
+# i: species; j: event localized (a song that happened); k: clip (recording of song from known distance)
+# d: distance of clip k's recorder from event j
+# f: frequency of song recorded in event j
+# Y: under-estimated source volume based on physics, ie L_observed + A_geo(d) + A_atm(d)
+#   - equalt to L_i - Ahab_ijk, ie source volume - excess attenuation due to habitat
+# where L_observed is the dB SPL measurement of source volume, corrected by calibrating the ARU recording
+# based on angle of arrival and by removing noise level
+
+# Ahab_ijk: excess attenuation beyond spherical spreading and atmospheric attenuation
+#   which we model as linear with habitat coefficients for open/closed (habitat_ijk) and landscape rugosity
+
+# A_geo: geometric spreading, 1/d**2
+# A_atm: atmospheric loss, proportional to d and f**2
+
+# Y_ijk = L_i - Ahab_ijk * f_i * d_ijk
+
+# good explanation of nesting in lme4 
+# https://www.muscardinus.be/statistics/nested.html#:~:text=Nested%20random%20effects%20assume%20that,relationship%20between%20the%20random%20effects.
+# basically: if A is big grouping and B is sub-grouping of A, 
+# random effects on A and B: (1|A) + (1|A:B) can be abbreviated into (1|A/B)
+# and if B values are unique, rather than repeated, across A, 
+# (1|A) + (1|B) is equivalent as well
+
+
+# from the equation for observed sound level at distance d (Euclidean distance - 1m):
+# L_obs = L_0 - A_geo - A_atm - A_hab
+# A_hab = alpha_hab * freq * d
+# A_geo = 20*log10(d)
+# A_atm = ...
+#
+# where: 
+# L_0: source level at 1 m, dB SPL
+# d: distance to source - 1m
+# A_geo: level reduction due to spherical spreading
+# A_atm: loss due to atmospheric absorption
+# A_hab: any remaining attenuation beyond A_geo and A_atm
+# 
+# isolate unkowns L_0 and A_hab=alpha_hab * f *d
+# Y = L* + alpha_hab
+# where Y is -1*(L_obs + A_geo + A_atm)/(freq*d)
+# and L* is -1*L_0/(freq*d)
+# 
+# model right side as linear model, 
+# with nested random effects on L* for species _and_ for event within species
+
+clips = read.csv('../metadata/localized_clips_with_decibel.csv')
+
+#calc Y from L_obs (corrected_dB_max), A_geo, A_atm
+clips$freq <- (clips$low_f + clips$high_f)/2
+r0 = 1 #1 meter reference point
+clips$d = clips$distance_m - r0 #distance to "reference" d0=1m
+ref_pressure = 20e-6 # 20 micro Pascals, reference of dB SPL in air
+# level_pascals = 10^(clips$corrected_dB_max/20) * (ref_pressure)^2 
+atm_atten = atmospheric_attenuation(
+  clips$freq,clips$temp, RH=0.7, p=101325,
+  formula = 1)
+clips$A_atm <- atm_atten$atmospheric.attenuation * clips$d
+
+# geometric spreading
+clips$A_geo <- 20 * log10(clips$distance_m/r0)
+
+clips$Y <- -1*(clips$corrected_dB_max + clips$A_geo + clips$A_atm)/(clips$d*clips$freq)
+# note that the random effect on event id is on L* = -1*L_0/(d*freq)
+
+# remaining q: is L* eestimated here, or do we need to include it somewhere?
+# I think that the random effect estimates N(mu,sigma) not just N(0,sigma) so its included in the random effect
+# but check w/Justin/Tessa
+# also, we probably want a _fixed_ effect for species? otherwise we don't estimate a per-species L0
+# m1 <- lmer(Y ~ 1 + (1 | class_name) + (1 | class_name:event_id), data = clips)  # (1| class_name) + (1 | event_id)
+
+# so perhaps: fixed effect for class name, random effect for event_id 
+# we are not fitting a sigma for species volume; 
+m0 <- lm(Y ~ 1 + class_name , data = clips) 
+
+L0 = -fixedeffect * f * d
+# alpha0 is the intercept
+
+# back-calculate L0_i per species and 
+m0 <- lmer(Y ~ 1  + class_name + (1 | event_id), data = clips) 
+m1 <- lmer(Y ~ 1  + habitat_closed + class_name + (1 | event_id), data = clips) 
+m2 <- lmer(Y ~ 1  + habitat_rugosity + habitat_closed + class_name + (1 | event_id), data = clips) 
+
+# add covariates:
+#+ a_rugosity*habitat_rugosity + a_rugosity*habitat_closed
+m1
+```
+
+
+
+```{r}
+
+# need to make nested lists of knowns: Y[i,j,k], f[i], d[i,j,k], habitat[i,j,k], rugosity[i,j,k]
+
+
+modelCode <- nimbleCode({
+  #model
+  for (i in 1:N_SPECIES){
+    for (j in 1:N_EVENTS[i]){
+      for (k in 1:N_CLIPS[i,j]){
+        Y[i,j,k] = L[i] - Ahab[i,j,k] * f[i] * d[i,j,k]
+        Ahab_ijk ~ dnorm(muH[i,j,k],sigmaH)
+        muH[i,j,k] = alpha_0 + alpha_1 * habitat[i,j,k] + alpha_2 * rugosity[i,j,k]
+        L[i] ~ dnorm(muL,sigmaL)
+      }
+    }
+  }
+  
+  # priors
+  # L[i] sigmaH, alpha_0, alpha_1, alpha_2
+  
+  
+})
+```
+
+
+```{r}
+```
+
