@@ -1,5 +1,5 @@
 
-#Covariate values that came out:
+#COEFFICIENT values that came out:
 """
 Catharus guttatus,0.0007019
 Contopus virens,0.0003437
@@ -14,7 +14,7 @@ Setophaga virens,0.0005390
 Vireo solitarius,0.0002910
 """
 
-# RUN THE JUPYTER NOTEBOOK TO ADD THE COVARIATE VALUES
+# RUN THE JUPYTER NOTEBOOK TO ADD THE COEFFICIENT VALUES
 
 # Other covariates
 alpha_0 <- -0.0002688748
