@@ -187,16 +187,25 @@ library("baRulho")
 
 ```{r}
 clips = read.csv('../metadata/localized_clips_with_decibel.csv')
-
+clips$class_name <- factor(clips$class_name)
+clips$rel_hum <- clips$rel_hum / 100
 #calc Y from L_obs (corrected_dB_max), A_geo, A_atm
 clips$freq <- (clips$low_f + clips$high_f)/2
 r0 = 1 #1 meter reference point
 clips$d = clips$distance_m - r0 #distance to "reference" d0=1m
+
+# PA data has temp from audiomoth
+clips$temp_C <- ifelse(!is.na(clips$temp), clips$temp, clips$temp_C)
+
 # ref_pressure = 20e-6 # 20 micro Pascals, reference of dB SPL in air
 # level_pascals = 10^(clips$corrected_dB_max/20) * (ref_pressure)^2 
 atm_atten = atmospheric_attenuation(
-  clips$freq,clips$temp, RH=clips$rel_hum, p=101325,
-  formula = 2) # formula 2: 2007 algorithm; units are dB/meter
+  clips$freq,
+  clips$temp_C, 
+  RH=clips$rel_hum, 
+  p=101325,
+  formula = 2
+) # formula 2: 2007 algorithm; units are dB/meter
 # atmospheric absoprtion is atm_atten coef * distance 
 clips$A_atm <- atm_atten$atmospheric.attenuation * clips$d
 
@@ -212,6 +221,8 @@ clips$Y <- -1*(clips$corrected_dB_max + clips$A_geo + clips$A_atm)/(clips$d*clip
 # also, we probably want a _fixed_ effect for species? otherwise we don't estimate a per-species L0
 # m1 <- lmer(Y ~ 1 + (1 | class_name) + (1 | class_name:event_id), data = clips)  # (1| class_name) + (1 | event_id)
 
+# filter out rows without Y values
+
 # so perhaps: fixed effect for class name, random effect for event_id 
 # we are not fitting a sigma for species volume; 
 m0 <- lm(Y ~ 1 + class_name , data = clips) 
@@ -219,14 +230,26 @@ m0 <- lm(Y ~ 1 + class_name , data = clips)
 # L0 = -fixedeffect * f * d
 # alpha0 is the intercept
 
-# back-calculate L0_i per species and 
+# remove rows if 
+# clips <- clips %>%
+#   na.omit(corrected_dB_max)
+
+# Save these calculated values to a new CSV
+write.csv(clips, "../metadata/prediction_df.csv", row.names=FALSE)
+
+# back-calculate L0_i per species and A_hab(f,covars)
 m0 <- lmer(Y ~ 1  + class_name + (1 | event_id), data = clips) 
-m1 <- lmer(Y ~ 1  + habitat_closed + class_name + (1 | event_id), data = clips) 
+m1 <- lmer(Y ~ 1  + habitat_tree_cover + class_name + (1 | event_id), data = clips) 
 m2 <- lmer(Y ~ 1 + habitat_tree_cover + class_name + (1 | event_id), data = clips) 
 m3 <- lm(Y ~ 1 + habitat_tree_cover + class_name, data = clips) 
 
+clips$preds_m3 <- predict(m3)
+# levels(preds$class_name)
+# preds$m3_pred_Y <- predict(m3,newdata=preds)
+
 # Assuming your dataframe is named 'your_dataframe'
 library(dplyr)
+
 
 clips_no_rare_classes <- clips %>%
   group_by(class_name) %>%
@@ -244,8 +267,13 @@ m4 <- lmer(Y ~ 1 + habitat_tree_cover + class_name + (1 | event_id), data = clip
 
 # add covariates:
 #+ a_rugosity*habitat_rugosity + a_rugosity*habitat_closed
-m3
+summary(m3)
 ```
+
+```{r}
+predict(m3)
+```
+
 
 
 
